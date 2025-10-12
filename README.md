@@ -19,3 +19,8 @@ This script offers a quick & easy way to modify performance of sequenced notes &
 Pitch transpose by semitones & octaves<br>
 Velocity modifiers:<br>
 base offset, multiplier, min & max thresholds & randomize velocity<br>
+
+## Harmonizer
+Harmonizer is a modular harmony voice generator, here to introduce simple & randomly generated harmony to your MIDI.<br>
+It can Generate additional velocity modified harmony voices, that are quantized to scale.<br>
+These voices can be a set interval, or be randomly chosen from 2 different randomization modes.<br>
