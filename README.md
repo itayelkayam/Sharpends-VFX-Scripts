@@ -19,8 +19,16 @@ This script offers a quick & easy way to modify performance of sequenced notes &
 Pitch transpose by semitones & octaves<br>
 Velocity modifiers:<br>
 base offset, multiplier, min & max thresholds & randomize velocity<br>
+KeyMod Walkthrough: https://youtu.be/JUcpmSgZ1pw <br>
 
 ## Harmonizer
 Harmonizer is a modular harmony voice generator, here to introduce simple & randomly generated harmony to your MIDI.<br>
 It can Generate additional velocity modified harmony voices, that are quantized to scale.<br>
 These voices can be a set interval, or be randomly chosen from 2 different randomization modes.<br>
+Harmonizer Walkthrough: https://youtu.be/QeTsmlNEF7I <br>
+
+## Harp
+Harp is a Crescendo-like simulation, achieved by playing fast notes that progress towards your played note.<br>
+Harp can create upwards & downwards Crescendos & quantize them to scale.<br>
+Crescendo time & behavior can be controlled by the Time section, and be polyphony safe for lower CPU & voice usage.<br>
+Harp Walkthrough: https://youtu.be/x0T-aMf9n0k <br>
