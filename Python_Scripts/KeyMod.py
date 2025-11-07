@@ -1,6 +1,6 @@
 import flvfx as vfx
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -13,10 +13,18 @@ class PitchGroup:
 @dataclass(frozen=True)
 class VelocityRandomGroup:
     NAME: str = "Velocity Randomization"
-    RANDOM_PERCENT_ABOVE: str = "% Above"
-    RANDOM_PERCENT_BELOW: str = "% Below"
-    RANDOMIZE_RELATIVE: str = "Relative %"
+    ENABLE_RANDOMIZATION: str = "Enable"
+    RANDOMIZE_RELATIVE_PERCENT: str = "Relative %"
+    RANDOMIZE_RELATIVE_OFFSET: str = "Relative +/-"
     RANDOMIZE_ABSOLUTE: str = "Absolute"
+    RANDOMIZATION_MODE: str = "Mode"
+    RANDOMIZATION_MODE_OPTIONS = [
+        RANDOMIZE_ABSOLUTE,
+        RANDOMIZE_RELATIVE_PERCENT,
+        RANDOMIZE_RELATIVE_OFFSET
+    ]
+    RANDOM_RELATIVE_ABOVE: str = "Relative Above"
+    RANDOM_RELATIVE_BELOW: str = "Relative Below"
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,26 @@ class Interface:
     VELOCITY_THRESHOLD_GROUP: VelocityThresholdGroup = VelocityThresholdGroup()
 
 
+script_text = f"""Sharpend's KeyMod
+Modify Velocity & Note offset without MIDI keyboard menu diving
+New in v1.1: 2 Relative Velocity Randomization Modes
+----------------------------
+{PitchGroup.PITCH_SEMITONES}: Note Pitch offset in Semitones.
+{PitchGroup.PITCH_OCTAVE}: Note Pitch offset in Octaves.
+
+{VelocityRandomGroup.ENABLE_RANDOMIZATION}: Enable Velocity Randomization. 
+{VelocityRandomGroup.RANDOMIZATION_MODE}: Velocity Randomization Mode: {VelocityRandomGroup.RANDOMIZATION_MODE_OPTIONS}.
+{VelocityRandomGroup.RANDOM_RELATIVE_ABOVE}: Random Range for Velocity Above played Velocity.
+{VelocityRandomGroup.RANDOM_RELATIVE_BELOW}: Random Range for Velocity Below played Velocity.
+
+{VelocityMultOffsetGroup.VELOCITY_MULTIPLIER}: Velocity Multiplier.
+{VelocityMultOffsetGroup.VELOCITY_BASE}: Velocity Base Offset.
+
+{VelocityThresholdGroup.VELOCITY_MIN}: Velocity Minimum.
+{VelocityThresholdGroup.VELOCITY_MAX}: Velocity Maximum.
+"""
+
+
 def get_group_controller_str(group, name=''):
     """Get group controller string without acquiring value - for static definitions"""
     name = name if name else group.NAME
@@ -51,30 +79,80 @@ def get_group_controller(group, name=''):
     return vfx.context.form.getInputValue(get_group_controller_str(group, name))
 
 
-selected = None
-random_switches = [
-    get_group_controller_str(VelocityRandomGroup, name=Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE),
-    get_group_controller_str(VelocityRandomGroup, name=Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_ABSOLUTE)
-]
-prev_state = [0] * len(random_switches)
+class RandomService:
+    def __init__(self, velocity, min_velocity, max_velocity):
+        self._velocity = velocity
+        self._min_velocity = min_velocity
+        self._max_velocity = max_velocity
+        self._randomization_type = self._get_randomization_type()
+        self._random_strategy = self._determine_strategy()
 
+    def _get_randomization_type(self):
+        random_mode_idx = get_group_controller(
+            group=VelocityRandomGroup,
+            name=Interface.VELOCITY_RANDOM_GROUP.RANDOMIZATION_MODE)
+        self._randomization_type = Interface.VELOCITY_RANDOM_GROUP.RANDOMIZATION_MODE_OPTIONS[random_mode_idx]
+        print(self._randomization_type)
+        return self._randomization_type
 
-def ui_random_state():
-    """Get state of random checkboxes, ensure only 1 checkbox can be selected at most"""
-    global selected, prev_state
-    new_selected = None
-    for index, switch in enumerate(random_switches):
-        current_value = vfx.context.form.getInputValue(switch)
-        if current_value == 1 and prev_state[index] == 0:
-            new_selected = index
-        prev_state[index] = current_value
-    all_off = all(state == 0 for state in prev_state)
-    if new_selected is not None:
-        selected = new_selected
-        for switch in random_switches:
-            vfx.context.form.setNormalizedValue(switch, 0)
-    if not all_off and selected is not None:
-        vfx.context.form.setNormalizedValue(random_switches[selected], 1)
+    def _determine_strategy(self):
+        if self._randomization_type == Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_ABSOLUTE:
+            return self._randomize_absolute
+        elif self._randomization_type in [
+            Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE_PERCENT,
+            Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE_OFFSET]:
+            return self._randomize_relative
+        else:
+            raise KeyError('Non existing relative random range!')
+
+    def randomize_velocity(self):
+        self._random_strategy()
+        return self._velocity
+
+    def _randomize_absolute(self):
+        self._velocity = random.uniform(self._min_velocity, self._max_velocity)
+
+    @staticmethod
+    def _get_relative_direction(above, below):
+        go_above = True
+        if above > 0 and below > 0:  # both ranges are enabled
+            go_above = random.choice([True, False])  # choose whether to go above or below played velocity
+        else:  # only 1 range is enabled
+            if above > 0:
+                go_above = True
+            elif below > 0:
+                go_above = False
+        return go_above
+
+    def _randomize_relative_percent(self, is_dir_above: bool, above, below):
+        if is_dir_above:
+            multiplier = 1 + above
+        else:
+            multiplier = 1 - below
+        self._velocity = self._velocity * multiplier
+
+    def _randomize_relative_offset(self, is_dir_above: bool, above, below):
+        if is_dir_above:
+            offset = above
+        else:
+            offset = below * -1
+        self._velocity = self._velocity + offset
+
+    def _randomize_relative(self):
+        below_input = get_group_controller(group=VelocityRandomGroup,
+                                           name=Interface.VELOCITY_RANDOM_GROUP.RANDOM_RELATIVE_BELOW) / 100
+        above_input = get_group_controller(group=VelocityRandomGroup,
+                                           name=Interface.VELOCITY_RANDOM_GROUP.RANDOM_RELATIVE_ABOVE) / 100
+        below = random.uniform(0, below_input)
+        above = random.uniform(0, above_input)
+        is_dir_above = self._get_relative_direction(above, below)
+
+        if self._randomization_type == Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE_PERCENT:
+            self._randomize_relative_percent(is_dir_above, above, below)
+        elif self._randomization_type == Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE_OFFSET:
+            self._randomize_relative_offset(is_dir_above, above, below)
+        else:
+            raise KeyError('Non existing relative random range!')
 
 
 class VelocityMod:
@@ -84,8 +162,9 @@ class VelocityMod:
         self.max_velocity = self.get_max()
         self.base_velocity = self.get_base()
         self.multiplier_velocity = self.get_multiplier()
-        self.is_absolute_randomized_velocity: bool = self.get_is_absolute_randomized()
-        self.is_relative_randomized_velocity: bool = self.get_is_relative_randomized()
+        self.is_randomization_enabled = self.get_is_randomization_enabled()
+        self.random_service = RandomService(velocity=self.velocity,
+                                            min_velocity=self.min_velocity, max_velocity=self.max_velocity)
 
     def get_min(self):
         self.min_velocity = get_group_controller(group=VelocityThresholdGroup,
@@ -109,42 +188,14 @@ class VelocityMod:
             name=Interface.VELOCITY_MULT_OFFSET_GROUP.VELOCITY_MULTIPLIER)
         return self.multiplier_velocity
 
-    def get_is_absolute_randomized(self):
-        self.is_absolute_randomized_velocity = bool(get_group_controller(
+    def get_is_randomization_enabled(self):
+        self.is_randomization_enabled = bool(get_group_controller(
             group=VelocityRandomGroup,
-            name=Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_ABSOLUTE))
-        return self.is_absolute_randomized_velocity
+            name=Interface.VELOCITY_RANDOM_GROUP.ENABLE_RANDOMIZATION))
+        return self.is_randomization_enabled
 
-    def absolute_randomize_velocity(self):
-        self.velocity = random.uniform(self.min_velocity, self.max_velocity)
-
-    def get_is_relative_randomized(self):
-        self.is_relative_randomized_velocity = bool(get_group_controller(
-            group=VelocityRandomGroup,
-            name=Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE))
-        return self.is_relative_randomized_velocity
-
-    def relative_randomize_velocity(self):
-        percent_below_input = get_group_controller(group=VelocityRandomGroup,
-                                                   name=Interface.VELOCITY_RANDOM_GROUP.RANDOM_PERCENT_BELOW) / 100
-        percent_above_input = get_group_controller(group=VelocityRandomGroup,
-                                                   name=Interface.VELOCITY_RANDOM_GROUP.RANDOM_PERCENT_ABOVE) / 100
-        percent_below = random.uniform(0, percent_below_input)
-        percent_above = random.uniform(0, percent_above_input)
-
-        multiplier = 1
-        if percent_above > 0 and percent_below > 0:  # both ranges are enabled
-            go_above = random.choice([True, False])  # choose whether to go above or below played velocity
-            if go_above:
-                multiplier = 1 + percent_above
-            else:
-                multiplier = 1 - percent_below
-        else:  # only 1 range is enabled
-            if percent_above > 0:
-                multiplier = 1 + percent_above
-            elif percent_below > 0:
-                multiplier = 1 - percent_below
-        self.velocity = self.velocity * multiplier
+    def randomize_velocity(self):
+        self.velocity = self.random_service.randomize_velocity()
 
     def multiply_velocity(self):
         self.get_multiplier()
@@ -165,10 +216,8 @@ def modify_velocity(velocity) -> float:
     """Modify velocity according to user params"""
     mod = VelocityMod(velocity)
 
-    if mod.is_absolute_randomized_velocity:
-        mod.absolute_randomize_velocity()
-    elif mod.is_relative_randomized_velocity:
-        mod.relative_randomize_velocity()
+    if mod.is_randomization_enabled:
+        mod.randomize_velocity()
     mod.multiply_velocity()
     mod.add_base_to_velocity()
     mod.apply_thresholds_to_velocity()
@@ -206,7 +255,6 @@ def onTriggerVoice(incomingVoice):
 
 
 def onTick():
-    ui_random_state()
     for v in vfx.context.voices:
         v.copyFrom(v.parent_voice)
         v.note = v.modified_note
@@ -220,28 +268,26 @@ def onReleaseVoice(incomingVoice):
 
 
 def createDialog():
-    form = vfx.ScriptDialog("Sharpend's KeyMod",
-                            "Sharpend's KeyMod\nModify Velocity & Note offset without MIDI keyboard menu diving\n"
-                            "New in v1.1: Relative Velocity Randomization")
+    form = vfx.ScriptDialog("Sharpend's KeyMod", script_text)
     form.addGroup(Interface.PITCH_GROUP.NAME)
     form.addInputKnobInt(Interface.PITCH_GROUP.PITCH_SEMITONES, 0, -12, 12, hint='Pitch offset in semitones')
     form.addInputKnobInt(Interface.PITCH_GROUP.PITCH_OCTAVE, 0, -4, 4, hint='Pitch offset in Octaves')
     form.endGroup()
 
     form.addGroup(Interface.VELOCITY_RANDOM_GROUP.NAME)
-    form.addInputCheckbox(Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_RELATIVE, 0,
-                          hint='Enable Relative Velocity Randomization')
-    form.addInputCheckbox(Interface.VELOCITY_RANDOM_GROUP.RANDOMIZE_ABSOLUTE, 0,
-                          hint='Enable Absolute Velocity Randomization')
-    form.addInputKnobInt(Interface.VELOCITY_RANDOM_GROUP.RANDOM_PERCENT_ABOVE, 0, 0, 100,
+    form.addInputCheckbox(Interface.VELOCITY_RANDOM_GROUP.ENABLE_RANDOMIZATION, 0,
+                          hint='Enable Velocity Randomization')
+    form.addInputCombo(Interface.VELOCITY_RANDOM_GROUP.RANDOMIZATION_MODE,
+                       VelocityRandomGroup.RANDOMIZATION_MODE_OPTIONS, 1, 'Velocity Randomization Mode')
+    form.addInputKnobInt(Interface.VELOCITY_RANDOM_GROUP.RANDOM_RELATIVE_ABOVE, 0, 0, 100,
                          hint="Random Range for Velocity above played Velocity")
-    form.addInputKnobInt(Interface.VELOCITY_RANDOM_GROUP.RANDOM_PERCENT_BELOW, 0, 0, 100,
+    form.addInputKnobInt(Interface.VELOCITY_RANDOM_GROUP.RANDOM_RELATIVE_BELOW, 0, 0, 100,
                          hint="Random Range for Velocity below played Velocity")
     form.endGroup()
 
     form.addGroup(Interface.VELOCITY_MULT_OFFSET_GROUP.NAME)
     form.addInputKnob(Interface.VELOCITY_MULT_OFFSET_GROUP.VELOCITY_MULTIPLIER, 1, 0, 2, hint='Velocity Multiplier')
-    form.addInputKnob(Interface.VELOCITY_MULT_OFFSET_GROUP.VELOCITY_BASE, 0, -1, 1, hint='Velocity Base')
+    form.addInputKnob(Interface.VELOCITY_MULT_OFFSET_GROUP.VELOCITY_BASE, 0, -1, 1, hint='Velocity Base Offset')
     form.endGroup()
 
     form.addGroup(Interface.VELOCITY_THRESHOLD_GROUP.NAME)
